@@ -39,6 +39,7 @@ class Post {
         void like() {++m_likes_count;}
         std::string getContent() const {return m_content;}
         int getAuthorId() const {return m_author_id;}
+        int getLikesCount() {return m_likes_count;}
 };
 
 int Post::m_next_post_id{0};
@@ -89,6 +90,24 @@ void showAllPosts()
     }
 }
 
+void likePost()             //Duplicate likes not handled yet
+{
+    int userId{}, postId{};
+    std::cout << "User ID: ";
+    std::cin >> userId;
+    std::cout << "Post ID: ";
+    std::cin >> postId;
+
+    auto it = posts.find(postId);
+    if(it != posts.end())
+    {
+        it->second.like();
+        std::cout << "User " << userId << " liked post " << postId << " (Total likes: " << it->second.getLikesCount() << ")\n";
+    }
+    else
+        std::cout << "Post ID not found!/n";
+}
+
 int main()
 {
    
@@ -99,7 +118,7 @@ int main()
 
     while (true)
     {
-        std::cout << "\nChoose: \n1)Create User \n2)Create Post \n3)Show All Posts \n4)Exit\n\n";
+        std::cout << "\nChoose: \n1)Create User \n2)Create Post \n3)Show All Posts \n4)Like a Post \n5)Exit\n\n";
         std::cin >> command;
 
         switch(command)
@@ -115,8 +134,12 @@ int main()
             case 3: 
                 showAllPosts();
                 break;
-
+            
             case 4:
+                likePost();
+                break;
+
+            case 5:
                 return 0;
             
             default: return 0;
