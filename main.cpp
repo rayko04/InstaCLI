@@ -3,6 +3,7 @@
 #include <unordered_map>
 #include <vector>
 #include <limits>
+#include <unordered_set>
 
 class User{
     private:
@@ -30,16 +31,25 @@ class Post {
         int m_likes_count{};
         std::string m_content{};
         int m_author_id{};
+        std::unordered_set<int> m_liked_by{};
 
     public:
         Post() = default;
         Post(int user_id, std::string content) : m_post_id{++m_next_post_id}, m_likes_count{0}, m_content{content}, m_author_id{user_id} {}
 
         int getPostId() const {return m_post_id;}
-        void like() {++m_likes_count;}
+        
         std::string getContent() const {return m_content;}
         int getAuthorId() const {return m_author_id;}
-        int getLikesCount() {return m_likes_count;}
+        int getLikesCount() const {return m_likes_count;}
+        
+        bool like(int userId) {
+            if(m_liked_by.count(userId))    return false;
+            ++m_likes_count;
+            m_liked_by.insert(userId);
+
+            return true;
+        }
 };
 
 int Post::m_next_post_id{0};
@@ -76,7 +86,7 @@ void createPost()
     Post p{uid, content};
     posts[p.getPostId()] = p;
 
-    std::cout << "Post created by user " << uid << std::endl;
+    std::cout << "Post(id=" << p.getPostId()  << ") created by user " << uid << std::endl;
 
 }
 
@@ -86,26 +96,41 @@ void showAllPosts()
 
     for (const auto& [id, post]: posts)
     {
-        std::cout << "Post (id=" << id << ") by user " << post.getAuthorId() << ": \n" << post.getContent() << "\n"; 
+        std::cout << "Post (id=" << id << ") by user " << post.getAuthorId()  << ". Total Likes = " << post.getLikesCount() <<  "\n" << post.getContent() << "\n"; 
     }
 }
 
-void likePost()             //Duplicate likes not handled yet
+void likePost()             
 {
     int userId{}, postId{};
     std::cout << "User ID: ";
     std::cin >> userId;
+
+    if(users.find(userId) == users.end()) 
+    {
+        std::cout << "No user by the id "  << userId << std::endl;
+        return;
+    }
+
     std::cout << "Post ID: ";
     std::cin >> postId;
 
     auto it = posts.find(postId);
     if(it != posts.end())
     {
-        it->second.like();
-        std::cout << "User " << userId << " liked post " << postId << " (Total likes: " << it->second.getLikesCount() << ")\n";
+        if(it->second.like(userId))
+            std::cout << "User " << userId << " liked post " << postId << " (Total likes: " << it->second.getLikesCount() << ")\n";
+        else
+            std::cout << "User " << userId << " has already liked the post (id=" << postId << ").\n";
+
     }
     else
         std::cout << "Post ID not found!/n";
+}
+
+void follow()
+{
+    
 }
 
 int main()
@@ -118,7 +143,7 @@ int main()
 
     while (true)
     {
-        std::cout << "\nChoose: \n1)Create User \n2)Create Post \n3)Show All Posts \n4)Like a Post \n5)Exit\n\n";
+        std::cout << "\nChoose: \n1)Create User \n2)Create Post \n3)Like a Post \n4)Follow \n5)Show all posts \n6)Exit\n\n";
         std::cin >> command;
 
         switch(command)
@@ -132,14 +157,18 @@ int main()
                 break;
 
             case 3: 
-                showAllPosts();
+                likePost();
                 break;
             
             case 4:
-                likePost();
+                follow();
                 break;
 
             case 5:
+                showAllPosts();
+                break;
+
+            case 6:
                 return 0;
             
             default: return 0;
