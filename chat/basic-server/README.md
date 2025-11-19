@@ -34,7 +34,7 @@
     0: Use default Protocol for given socketType(TCP for stream, UDP for datagram).
 
 ### sockaddr_in
-    Structure that defines IP and Port for a socket.
+    Structure that defines IP and Port for a socket. memset(destination, value, length) fills the destination with size length wiprovided value. 
     Contains:
         sin_family: Defines addr family.
         sin_port: specifies port number. htons(): host to network short. Converts incoming byte order to network byte order(Big Endian)
@@ -53,3 +53,20 @@
 ### recv() 
     recv(socketDescriptor, buffer, sizeof(bufffer), optionalFlags)
     On success recv() returns number of bytes received. 0 if connection closed. SOCKET_ERROR in case of error.
+
+
+## Basic Functions of A Client
+1) Create socket
+2) server address resolution/setup
+3) connect()
+4) send()
+5) close()
+
+### connect()
+    Syscall used for establishing connection with server.
+    connect(sock_fd, pointerToSockAddr, sizeof(sockAddr))
+    return 0 on success, -1 on failiure
+
+### send()
+    send(sock_fd, buffer, bufferLength, optionalFlags)
+    on success returns number of bytes sent. on failure -1
