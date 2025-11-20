@@ -30,10 +30,26 @@ int tcpServer() {
 
     //receive data
     char buffer[1024] {};
-    int bytes {recv(client_fd, buffer, sizeof(buffer), 0)};
 
-    std::cout << "Client says: " << std::string(buffer, bytes) << std::endl;
+    while (true) {
+        memset(buffer, 0, sizeof(buffer));
+    
+        //receive data
+        int bytes {recv(client_fd, buffer, sizeof(buffer), 0)};
+        if(bytes <= 0) {
+            std::cout << "Client disconnected\n";
+            break;
+        }
 
+        std::cout << "Client says: " << std::string(buffer, bytes) << std::endl;
+
+        //send reply
+        std::cout << "Type Reply: ";
+        std::string reply{};
+        std::getline(std::cin, reply);
+        if(send(client_fd, reply.c_str(), reply.size(), 0) < 0) {perror("send"); break;}
+    }
+    
     //close connection
     close(client_fd);
     close(server_fd);

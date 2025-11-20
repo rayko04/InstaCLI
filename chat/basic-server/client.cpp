@@ -21,10 +21,29 @@ int main() {
     //connect
     if (connect(sock_fd, (sockaddr*)&addr, sizeof(addr)) < 0) {perror("connect"); return 1;}
 
-    //send
-    std::string msg{"HELLO SERVER!"};
-    if (send(sock_fd, msg.c_str(), msg.size(), 0) < 0) {perror("send"); return 1;}
+    char buffer[1024] {};
+
+    while (true) {
+        
+        //send
+        std::cout << "Send msg: ";
+        std::string msg{};
+        std::getline(std::cin, msg);
+        if (send(sock_fd, msg.c_str(), msg.size(), 0) < 0) {perror("send"); break;}      
+        
+        //receive
+        int bytes {recv(sock_fd, buffer, sizeof(buffer), 0)};
+        if(bytes <= 0) {
+            std::cout << "Server Disconnected\n";
+            break;
+        }
+
+        std::cout << "Server says: " << std::string(buffer, bytes) << std::endl;
+        
+    }
 
     //close
     close(sock_fd);
+    
+    return 0;
 }
