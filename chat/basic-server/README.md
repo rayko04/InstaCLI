@@ -70,3 +70,23 @@
 ### send()
     send(sock_fd, buffer, bufferLength, optionalFlags)
     on success returns number of bytes sent. on failure -1
+
+
+## Multiple Clients Concept at Server Level
+1) Server Keeps a list of clients (through a container)
+2) Handle each client seperately either through different threads or single thread multiplexing(select(), poll())
+3) Route message to appropriate client
+
+
+### std::thread
+    std::thread t(my_func, arguments)
+    creates a thread and call my_func inside that thread with provided arguments.
+
+### MUTEX
+    
+    std::mutex creates a mutex(lock) object. 
+    std::lock_guard<std::mutex> creates an object that is used to lock the mutex. Each time mutex is locked, no other thread can access that part of code at same time. The unlocking occurs automatically when lock_guard object goes out of scope. 
+
+## Multiple Clients Concept at Client level
+1) Messages from other clients can come any time so we need to split sending and receiving operations into 2 independant threads.Hence a non blocking behaviour.
+

@@ -3,7 +3,106 @@
 #include <unistd.h>
 #include <iostream>
 #include <cstring>
+#include <vector>
+#include <thread>
+#include <unordered_map>
+#include <mutex>
 
+std::unordered_map<std::string, int> user_map{};
+std::mutex map_mutex{};
+
+//trim spaces
+std::string trim(const std::string& str) {
+    size_t start {str.find_first_not_of("\t\n\r")};
+    size_t end {str.find_last_not_of("\t\n\r")};
+
+    if (start == std::string::npos || end == std::string::npos)
+        return "";
+
+    return str.substr(start, end-start+1);
+}
+
+void handleClient(int client_fd) {
+
+    char buffer[1024]{};
+    std::string target{};
+    std::string username{};
+
+    while (true) {
+        memset(buffer, 0, sizeof(buffer));
+    
+    //receive data
+        int bytes {recv(client_fd, buffer, sizeof(buffer), 0)};
+        if(bytes <= 0) {
+            std::cout << username << " disconnected\n";
+            //lock map_mutex before accessing user_map
+            std::lock_guard<std::mutex> guard(map_mutex);
+            if(!username.empty())   
+                user_map.erase(username);
+            break;
+        }
+        
+
+        std::string data(buffer, bytes);
+        data = trim(data);
+    
+    //LOGIN command
+        if (data.rfind("LOGIN", 0) == 0) {
+            
+            //trim "LOGIN "
+            username = trim(data.substr(6));
+            
+            if(!username.empty()) {
+                std::lock_guard<std::mutex> guard(map_mutex);
+                user_map[username] = client_fd;
+                std::cout << username << " logged in\n";
+            }
+        }
+
+    //SEND command
+        else if (data.rfind("SEND", 0) == 0) {
+            
+            //trim "SEND "
+            target = trim(data.substr(5));
+
+            std::lock_guard<std::mutex> guard(map_mutex);
+            if(user_map.find(target) == user_map.end()) {
+                std::cout << "\nNO USERNAME " << target << " found!\n";
+                target.clear();
+            }
+        }
+
+    //MSG command
+        else if (data.rfind("MSG", 0) == 0) {
+            
+            if(target.empty()) {
+                std::cout << "\nERROR: No Target Selected\n";
+                continue;
+            }
+
+            //trim "MSG "
+            std::string msg{ trim(data.substr(4)) };
+            
+            std::lock_guard<std::mutex> guard(map_mutex);
+            if (user_map.find(target) != user_map.end()) {
+                std::string send_msg {username + ": " + msg};
+
+                if (send(user_map[target], send_msg.c_str(), send_msg.size(), 0) < 0) {perror("send"); break;}
+            }
+            else {
+                std::cout << "\nERROR: Target " << target << " disconnected\n";
+                target.clear();
+            }
+        }
+
+    //invalid commands
+        else {
+            std::cout << "\nUNKNOWN COMMAND\n";
+        }
+    }
+
+    close(client_fd);
+}
 
 int tcpServer() {
    
@@ -24,34 +123,24 @@ int tcpServer() {
     //start listening
     if (listen(server_fd, 5) < 0) {perror("listen"); return 1;}
 
-    //create socket for the accepted client communication
-    int client_fd {accept(server_fd, nullptr, nullptr)};
-    if(client_fd < 0) {perror("accept"); return 1;}
-
-    //receive data
-    char buffer[1024] {};
-
+    // Accept and store connections with multiple clients
+    std::vector<int> clients {};
     while (true) {
-        memset(buffer, 0, sizeof(buffer));
-    
-        //receive data
-        int bytes {recv(client_fd, buffer, sizeof(buffer), 0)};
-        if(bytes <= 0) {
-            std::cout << "Client disconnected\n";
-            break;
-        }
 
-        std::cout << "Client says: " << std::string(buffer, bytes) << std::endl;
+        //create socket for the accepted client communication
+        int client_fd { accept(server_fd, nullptr, nullptr) };
+        if(client_fd < 0) {perror("accept"); break;}
 
-        //send reply
-        std::cout << "Type Reply: ";
-        std::string reply{};
-        std::getline(std::cin, reply);
-        if(send(client_fd, reply.c_str(), reply.size(), 0) < 0) {perror("send"); break;}
+        clients.push_back(client_fd);
+
+        std::thread t(handleClient, client_fd);
+        t.detach();
     }
-    
-    //close connection
-    close(client_fd);
+
+     //close connection
+    for (int client_fd: clients) {
+        close(client_fd);
+    }
     close(server_fd);
 
     return 0;
