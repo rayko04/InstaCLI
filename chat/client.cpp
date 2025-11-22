@@ -6,6 +6,7 @@
 #include <cstring>
 #include <thread>
 
+//receive
 void receiveMessages(int sock_fd) {
     
     char buffer[1024] {};
@@ -39,24 +40,27 @@ int tcpClient() {
     //connect
     if (connect(sock_fd, (sockaddr*)&addr, sizeof(addr)) < 0) {perror("connect"); return 1;}
 
+    //seperate thread for receiving msgs
     std::thread receiver(receiveMessages, sock_fd);
     receiver.detach();
 
     while (true) {
         
-        //send
+    //LOGIN 
         std::cout << "\nLOGIN: ";
         std::string login{};
         std::getline(std::cin, login);
         login = "LOGIN " + login;
         if(send(sock_fd, login.c_str(), login.size(), 0) < 0) {perror("send"); break;}
 
+    //TARGET
         std::cout << "\nSEND: ";
         std::string target{};
         std::getline(std::cin, target);
         target = "SEND " + target;
         if(send(sock_fd, target.c_str(), target.size(), 0) < 0) {perror("send"); break;}
 
+    //MSG
         while (true) {
             std::cout << "\nMSG: ";
             std::string msg{};
