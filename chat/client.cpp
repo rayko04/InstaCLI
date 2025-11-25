@@ -5,6 +5,11 @@
 #include <iostream>
 #include <cstring>
 #include <thread>
+#include <mutex>
+
+std::mutex cout_mutex {};
+std::string current_prompt = "";
+
 
 //receive
 void receiveMessages(int sock_fd) {
@@ -20,7 +25,11 @@ void receiveMessages(int sock_fd) {
             exit(0);
         }
 
-        std::cout << std::string(buffer, bytes) << std::endl;
+        {
+            std::lock_guard<std::mutex> lock(cout_mutex);
+            std::cout << "\n\n--- NOTIFICATION ---\n" << std::string(buffer, bytes) << "\n---------------------\n";
+            std::cout << "\n" << current_prompt << ": " << std::flush;
+        }
     }
 }
 
@@ -44,31 +53,42 @@ int tcpClient() {
     std::thread receiver(receiveMessages, sock_fd);
     receiver.detach();
 
-    while (true) {
-        
-    //LOGIN 
-        std::cout << "\nLOGIN: ";
+
+    //LOGIN
+        {
+            current_prompt = "LOGIN";
+            std::lock_guard<std::mutex> lock(cout_mutex);
+            std::cout << "\nLOGIN: ";
+        }
         std::string login{};
         std::getline(std::cin, login);
         login = "LOGIN " + login;
-        if(send(sock_fd, login.c_str(), login.size(), 0) < 0) {perror("send"); break;}
-
+        if(send(sock_fd, login.c_str(), login.size(), 0) < 0) {perror("send"); close(sock_fd); return 1;}
+    
+        while (true) {
+        
     //TARGET
-        std::cout << "\nSEND: ";
+        {
+            current_prompt = "SEND";
+            std::lock_guard<std::mutex> lock(cout_mutex);
+            std::cout << "\nSEND: ";
+        }
         std::string target{};
         std::getline(std::cin, target);
         target = "SEND " + target;
         if(send(sock_fd, target.c_str(), target.size(), 0) < 0) {perror("send"); break;}
 
     //MSG
-        while (true) {
+        {
+            current_prompt = "MSG";
+            std::lock_guard<std::mutex> lock(cout_mutex);
             std::cout << "\nMSG: ";
-            std::string msg{};
-            std::getline(std::cin, msg);
-            msg = "MSG " + msg;
-            if (send(sock_fd, msg.c_str(), msg.size(), 0) < 0) {perror("send"); break;}      
+        }
+        std::string msg{};
+        std::getline(std::cin, msg);
+        msg = "MSG " + msg;
+        if (send(sock_fd, msg.c_str(), msg.size(), 0) < 0) {perror("send"); break;}      
         }    
-    }
 
     //close
     close(sock_fd);
