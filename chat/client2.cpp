@@ -10,7 +10,23 @@
 
 std::mutex cout_mutex {};
 std::string current_prompt = "";
-Database database{};
+
+
+bool checkUserExists(int sock_fd, const std::string& username) {
+    
+    std::string checkCmd = "CHECK " + username;
+    if(send(sock_fd, checkCmd.c_str(), checkCmd.size(), 0) < 0) { perror("send"); return false;}
+    
+    // Wait for response
+    char buffer[1024]{};
+    int bytes = recv(sock_fd, buffer, sizeof(buffer), 0);
+    if(bytes <= 0) {
+        return false;
+    }
+    
+    std::string response(buffer, bytes);
+    return (response == "EXISTS");
+}
 
 
 //receive
@@ -34,35 +50,6 @@ void receiveMessages(int sock_fd) {
         }
     }
 }
-
-std::string loginFunc() {
-        
-    {
-        //update current prompt for notifs
-        current_prompt = "LOGIN";
-        
-        //lock mutex
-        std::lock_guard<std::mutex> lock(cout_mutex);
-        std::cout << "\nLOGIN/REGISTER: ";
-    }
-
-    //take input
-    std::string name{};
-    std::getline(std::cin, name);
-    std::string loginCmd{};
-
-    //update database
-    if(database.login(name))
-        //send LOGIN cmd
-        loginCmd = "LOGIN " + name;
-    
-    else
-        loginCmd = "REGIS " + name;
-
-    std::cout << "\nWELCOME " << name << std::endl;
-    return loginCmd;
-}
-
 
 int tcpClient() {
     
@@ -99,10 +86,13 @@ int tcpClient() {
         //take input
         std::string name{};
         std::getline(std::cin, name);
+        
+        // Query server database to check if user exists
+        // And update if it doesn't
+        bool userExists = checkUserExists(sock_fd, name);
         std::string loginCmd{};
 
-        //update database
-        if(database.login(name))
+        if(userExists)
             //send LOGIN cmd
             loginCmd = "LOGIN " + name;
     

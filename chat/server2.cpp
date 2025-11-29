@@ -9,6 +9,7 @@
 #include <mutex>
 #include "database.hpp"
 
+Database database{};
 std::unordered_map<std::string, int> user_map{};
 std::mutex map_mutex{};
 
@@ -47,8 +48,23 @@ void handleClient(int client_fd) {
         std::string data(buffer, bytes);
         data = trim(data);
     
+    //CHECK command
+        if (data.rfind("CHECK", 0) == 0) {
+        
+        //trim "CHECK "
+        std::string check_username = trim(data.substr(6));
+        
+            if(!check_username.empty()) {
+                std::lock_guard<std::mutex> guard(map_mutex);
+                bool exists = database.login(check_username);
+                
+                // Send response back to client
+                std::string response = exists ? "EXISTS" : "NOTEXISTS";
+                if(send(client_fd, response.c_str(), response.size(), 0) < 0) {perror("send");}
+            }
+        }
     //LOGIN command
-        if (data.rfind("LOGIN", 0) == 0) {
+        else if (data.rfind("LOGIN", 0) == 0) {
             
             //trim "LOGIN "
             username = trim(data.substr(6));
