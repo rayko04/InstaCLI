@@ -42,7 +42,7 @@ class Database {
             return false;       //return false if registration
         }
 
-        std::string logout(std::string name) {
+        void logout(std::string name) {
             
             for(User& user: registered_users) {
                 if(user.getUserName() == name) {
@@ -50,6 +50,5 @@ class Database {
                     break;
                 }
             }
-            return "\nUser " + name + " logged out.\n";
         }
 };
