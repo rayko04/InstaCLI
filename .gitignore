@@ -4,5 +4,7 @@ src/client
 src/server
 src/client2
 src/server2
+src/server.cpp
+src/client.cpp
 feed-chat/
 chat/new
