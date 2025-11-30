@@ -7,9 +7,19 @@
 #include <thread>
 #include <unordered_map>
 #include <mutex>
+#include "database.hpp"
 
+Database database{};
 std::unordered_map<std::string, int> user_map{};
 std::mutex map_mutex{};
+
+std::string getCurrentTimestamp() {
+    
+    time_t now = time(0);
+    char buf[80];
+    strftime(buf, sizeof(buf), "%H:%M:%S", localtime(&now));
+    return std::string(buf);
+}
 
 //trim spaces
 std::string trim(const std::string& str) {
@@ -46,8 +56,23 @@ void handleClient(int client_fd) {
         std::string data(buffer, bytes);
         data = trim(data);
     
+    //CHECK command
+        if (data.rfind("CHECK", 0) == 0) {
+        
+        //trim "CHECK "
+        std::string check_username = trim(data.substr(6));
+        
+            if(!check_username.empty()) {
+                std::lock_guard<std::mutex> guard(map_mutex);
+                bool exists = database.login(check_username);
+                
+                // Send response back to client
+                std::string response = exists ? "EXISTS" : "NOTEXISTS";
+                if(send(client_fd, response.c_str(), response.size(), 0) < 0) {perror("send");}
+            }
+        }
     //LOGIN command
-        if (data.rfind("LOGIN", 0) == 0) {
+        else if (data.rfind("LOGIN", 0) == 0) {
             
             //trim "LOGIN "
             username = trim(data.substr(6));
@@ -56,6 +81,30 @@ void handleClient(int client_fd) {
                 std::lock_guard<std::mutex> guard(map_mutex);
                 user_map[username] = client_fd;
                 std::cout << username << " logged in\n";
+            }
+        }
+
+        else if (data.rfind("REGIS", 0) == 0) {
+            
+            //trim "REGIS "
+            username = trim(data.substr(6));
+            
+            if(!username.empty()) {
+                std::lock_guard<std::mutex> guard(map_mutex);
+                user_map[username] = client_fd;
+                std::cout << username << " registered\n";
+            }
+        }
+
+        else if (data.rfind("LOGOUT", 0) == 0) {
+            
+            //trim "LOGOUT "
+            username = trim(data.substr(7));
+            
+            if(!username.empty()) {
+                std::lock_guard<std::mutex> guard(map_mutex);
+                user_map.erase(username);
+                std::cout << username << " logged out.\n";
             }
         }
 
@@ -84,15 +133,72 @@ void handleClient(int client_fd) {
             std::string msg{ trim(data.substr(4)) };
             
             std::lock_guard<std::mutex> guard(map_mutex);
+            
             if (user_map.find(target) != user_map.end()) {
-                std::string send_msg {username + ": " + msg};
-
+                
+                // Store message in database
+                std::string timestamp = getCurrentTimestamp();
+                database.addMessage(username, target, msg, timestamp);
+                
+                // Send as notification if online
+                std::string send_msg {"NOTIFY|" + username + ": " + msg};
                 if (send(user_map[target], send_msg.c_str(), send_msg.size(), 0) < 0) {perror("send"); break;}
+
+                // Send confirmation to sender
+                std::string confirm = "MSG_SENT";
+                send(client_fd, confirm.c_str(), confirm.size(), 0);
             }
+
             else {
                 std::cout << "\nERROR: Target " << target << " disconnected\n";
                 target.clear();
             }
+        }
+
+    //HISTORY command
+        else if (data.rfind("HISTORY", 0) == 0) {
+    
+            std::string target_user = trim(data.substr(8));
+    
+            if(target_user.empty() || username.empty()) {
+                std::string error = "ERROR: Invalid history request";
+                send(client_fd, error.c_str(), error.size(), 0);
+                continue;
+            }
+    
+            std::lock_guard<std::mutex> guard(map_mutex);
+    
+            // Get history from database
+            std::vector<Message> history = database.getChatHistory(username, target_user);
+    
+            // Send each message
+            for(const auto& msg : history) {
+                std::string formatted = "HISTORY_MSG|" + msg.sender + "|" + msg.timestamp + "|" + msg.content;
+                send(client_fd, formatted.c_str(), formatted.size(), 0);
+                usleep(10000); // Small delay to prevent message merging
+            }
+    
+            // Send end marker
+            std::string end_marker = "HISTORY_END";
+            send(client_fd, end_marker.c_str(), end_marker.size(), 0);
+        }
+
+    //CONTACTS command - get list of users you've chatted with
+        else if (data.rfind("CONTACTS", 0) == 0) {
+    
+            if(username.empty()) continue;
+    
+            std::lock_guard<std::mutex> guard(map_mutex);
+    
+            // Get contacts from database
+            std::vector<std::string> contacts = database.getContacts(username);
+    
+            std::string contacts_msg = "CONTACTS_LIST|";
+            for(const auto& contact : contacts) {
+                contacts_msg += contact + ",";
+            }
+    
+            send(client_fd, contacts_msg.c_str(), contacts_msg.size(), 0);
         }
 
     //invalid commands
