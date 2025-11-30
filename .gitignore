@@ -1,7 +1,8 @@
 main
-chat/client
-chat/server
-chat/client2
-chat/server2
+main.cpp
+src/client
+src/server
+src/client2
+src/server2
 feed-chat/
 chat/new
