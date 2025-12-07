@@ -7,7 +7,11 @@
 #include <thread>
 #include <unordered_map>
 #include <mutex>
+#include <fstream>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include "database.hpp"
+
 
 Database database{};
 std::unordered_map<std::string, int> user_map{};
@@ -15,6 +19,7 @@ std::mutex map_mutex{};
 
 //trim spaces
 std::string trim(const std::string& str) {
+    
     size_t start {str.find_first_not_of("\t\n\r")};
     size_t end {str.find_last_not_of("\t\n\r")};
 
@@ -23,6 +28,123 @@ std::string trim(const std::string& str) {
 
     return str.substr(start, end-start+1);
 }
+
+//creates an upload directory (if not exists) for files with permission 0755
+void ensureUploadsDirectory() {
+
+    struct stat st{};
+    if (stat("uploads", &st) == -1) {
+        mkdir("uploads", 0755);
+    }
+}
+
+std::string generateUniqueFilename(const std::string& originalFilename) {
+  
+    time_t now = time(0);
+    return "uploads/" + std::to_string(now) + "_" + originalFilename;
+}
+
+//receive file from client and save it in uploads directory
+std::string receiveFile(int client_fd, const std::string& filename, long filesize) {
+    
+    ensureUploadsDirectory();
+    
+    std::string savedPath = generateUniqueFilename(filename);
+    std::ofstream outFile(savedPath, std::ios::binary);
+    
+    if (!outFile.is_open()) {
+        std::cout << "\nError: Could not create file " << savedPath << "\n";
+        return "";
+    }
+    
+    // Send ACK
+    if (send(client_fd, "ACK", 3, 0) < 0) {
+        perror("send ACK");
+        outFile.close();
+        return "";
+    }
+    
+    // Receive file data
+    const size_t CHUNK_SIZE = 4096;
+    char buffer[CHUNK_SIZE];
+    long totalReceived = 0;
+    
+    while (totalReceived < filesize) {
+        long remaining = filesize - totalReceived;
+        size_t toReceive = (remaining < CHUNK_SIZE) ? remaining : CHUNK_SIZE;
+        
+        ssize_t bytes = recv(client_fd, buffer, toReceive, 0);
+        if (bytes <= 0) {
+            std::cout << "\nError receiving file data\n";
+            outFile.close();
+            remove(savedPath.c_str());
+            return "";
+        }
+
+        outFile.write(buffer, bytes);
+        totalReceived += bytes;
+    }
+    
+    outFile.close();
+    std::cout << "\nFile received and saved: " << savedPath << " (" << totalReceived << " bytes)\n";
+    
+    return savedPath;
+}
+
+bool sendFileToClient(int client_fd, const std::string& filePath) {
+    
+    std::ifstream file(filePath, std::ios::binary);
+    if (!file.is_open()) {
+        std::cout << "\nError: Could not open file " << filePath << "\n";
+        return false;
+    }
+    
+    file.seekg(0, std::ios::end);
+    long fileSize = file.tellg();
+    file.seekg(0, std::ios::beg);
+    
+    size_t pos = filePath.find_last_of("/");
+    std::string fileName = (pos != std::string::npos) ? filePath.substr(pos + 1) : filePath;
+    
+    std::string fileHeader = "DOWNLOADACK " + fileName + "|" + std::to_string(fileSize);
+    if (send(client_fd, fileHeader.c_str(), fileHeader.size(), 0) < 0) {
+        perror("send file header");
+        return false;
+    }
+    
+    char ack[4]{};
+    if (recv(client_fd, ack, sizeof(ack), 0) <= 0) {
+        std::cout << "\nError: No ACK received from client\n";
+        return false;
+    }
+    
+    const size_t CHUNK_SIZE = 4096;
+    char buffer[CHUNK_SIZE];
+    long totalSent = 0;
+    
+    while (file.read(buffer, CHUNK_SIZE) || file.gcount() > 0) {
+        size_t bytesRead = file.gcount();
+        ssize_t bytesSent = send(client_fd, buffer, bytesRead, 0);
+        if (bytesSent < 0) {
+            perror("send file data");
+            file.close();
+            return false;
+        }
+        totalSent += bytesSent;
+    }
+    
+    file.close();
+    std::cout << "\nFile sent to client: " << fileName << " (" << totalSent << " bytes)\n";
+    return true;
+}
+
+std::string getCurrentTimestamp() {
+    time_t now = time(0);
+    char buf[80];
+    strftime(buf, sizeof(buf), "%H:%M:%S", localtime(&now));
+    return std::string(buf);
+}
+
 
 void handleClient(int client_fd) {
 
@@ -59,7 +181,7 @@ void handleClient(int client_fd) {
                 bool exists = database.login(check_username);
                 
                 // Send response back to client
-                std::string response = exists ? "EXISTS" : "NOTEXISTS";
+                std::string response = exists ? "RESPONSE:EXISTS" : "RESPONSE:NOTEXISTS";
                 if(send(client_fd, response.c_str(), response.size(), 0) < 0) {perror("send");}
             }
         }
@@ -75,7 +197,7 @@ void handleClient(int client_fd) {
                 std::cout << username << " logged in\n";
             }
         }
-
+    //REGIS command
         else if (data.rfind("REGIS", 0) == 0) {
             
             //trim "REGIS "
@@ -87,7 +209,7 @@ void handleClient(int client_fd) {
                 std::cout << username << " registered\n";
             }
         }
-
+    //LOGOUT command
         else if (data.rfind("LOGOUT", 0) == 0) {
             
             //trim "LOGOUT "
@@ -126,8 +248,9 @@ void handleClient(int client_fd) {
             
             std::lock_guard<std::mutex> guard(map_mutex);
             if (user_map.find(target) != user_map.end()) {
-                std::string send_msg {username + ": " + msg};
+                database.storeMessage(username, target, msg, getCurrentTimestamp());
 
+                std::string send_msg {"NOTIF:" + username + ": " + msg};
                 if (send(user_map[target], send_msg.c_str(), send_msg.size(), 0) < 0) {perror("send"); break;}
             }
             else {
@@ -135,6 +258,31 @@ void handleClient(int client_fd) {
                 target.clear();
             }
         }
+
+      //CHATLIST command
+        else if (data.rfind("CHATLIST", 0) == 0) {
+            
+            std::string chatListData = "RESPONSE:" + database.getChatList(username);
+            
+            if (send(client_fd, chatListData.c_str(), chatListData.size(), 0) < 0) {perror("send");}
+            
+            std::cout << username << " requested chat list\n";
+        }
+
+    //HISTORY command
+        else if (data.rfind("HISTORY", 0) == 0) {
+            
+            // trim "HISTORY "
+            std::string otherUser = trim(data.substr(8));
+            
+            if (!otherUser.empty()) {
+                std::string historyData = "RESPONSE:" + database.getConversation(username, otherUser);
+                
+                if (send(client_fd, historyData.c_str(), historyData.size(), 0) < 0) {perror("send");}
+                
+                std::cout << username << " requested chat history with " << otherUser << "\n";
+            }
+        }  
 
     //POST command
         else if (data.rfind("POST", 0) == 0) {
@@ -157,7 +305,7 @@ void handleClient(int client_fd) {
                 bool success {database.createPost(post_username, captions, mediaPath, timestamp)};
         
                 // Send response back to client
-                std::string response = success ? "OK" : "NO";
+                std::string response = success ? "RESPONSE:OK" : "RESPONSE:NO";
                 if (send(client_fd, response.c_str(), response.size(), 0) < 0) {perror("send");}
         
                 if (success) 
@@ -165,6 +313,7 @@ void handleClient(int client_fd) {
                 else 
                     std::cout << "Failed to create post for " << post_username << "\n";
             } 
+
 
             else {
                 
@@ -178,13 +327,76 @@ void handleClient(int client_fd) {
     //FEED command
         else if (data.rfind("FEED", 0) == 0) {
     
-            std::string feedData = database.showAllPosts();
+            std::string feedData = "RESPONSE:" + database.showAllPosts();
     
             // Send feed data back to client
             if (send(client_fd, feedData.c_str(), feedData.size(), 0) < 0) {perror("send");}
             
             std::cout << username << " requested feed\n";
         }
+
+    //FILE command
+        else if (data.rfind("FILE", 0) == 0) {
+    
+            // Parse: "FILE filename|filesize"
+            std::string fileInfo = trim(data.substr(5));
+        
+            size_t pos = fileInfo.find('|');
+            if (pos != std::string::npos) {
+                std::string filename = fileInfo.substr(0, pos);
+                long filesize = std::stol(fileInfo.substr(pos + 1));
+            
+                std::cout << "Receiving file: " << filename << " (" << filesize << " bytes)\n";
+            
+                // Receive and save the file
+                std::string savedPath = receiveFile(client_fd, filename, filesize);
+            
+                if (!savedPath.empty()) {
+                    // Send back the saved path to client
+                    std::string response{"RESPONSE:" + savedPath};
+                    if (send(client_fd, response.c_str(), response.size(), 0) < 0) {perror("send saved path");}
+                }
+
+                else {
+                    // Send error
+                    std::string error = "ERROR";
+                    if (send(client_fd, error.c_str(), error.size(), 0) < 0) {perror("send error");}
+                }
+            }
+        }
+
+
+    //DOWNLOAD command
+        else if (data.rfind("DOWNLOAD", 0) == 0) {
+        
+            std::string filePath = trim(data.substr(9));
+            if (!filePath.empty()) {
+                std::cout << username << " requesting download: " << filePath << "\n";
+                std::ifstream checkFile(filePath);
+            
+                if (!checkFile.good()) {
+                    std::string error = "ERROR:FILE_NOT_FOUND";
+                    if (send(client_fd, error.c_str(), error.size(), 0) < 0) { perror("send error");}
+                std::cout << "File not found: " << filePath << "\n";
+                } 
+
+                else {
+                    
+                    checkFile.close();
+                    if (!sendFileToClient(client_fd, filePath)) {
+                        std::string error = "ERROR:SEND_FAILED";
+                    if (send(client_fd, error.c_str(), error.size(), 0) < 0) { perror("send error");}
+                    }
+                }
+            } 
+            
+            else {
+                
+                std::string error = "ERROR:INVALID_PATH";
+                if (send(client_fd, error.c_str(), error.size(), 0) < 0) {perror("send error");}
+            }
+        }
+
 
     //invalid commands
         else {

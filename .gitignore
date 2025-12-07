@@ -8,3 +8,7 @@ src/server.cpp
 src/client.cpp
 feed-chat/
 src/new
+src/uploads
+src/Client
+src/Server
+src/downloads
