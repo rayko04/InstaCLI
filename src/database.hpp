@@ -322,6 +322,15 @@ class Database {
             }
         }
 
+        bool userExists(const std::string& username) const {
+            for (const User& user : registered_users) {
+                if (user.getUserName() == username) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         bool createPost(std::string username, std::string captions, std::string mediaPath, std::string timestamp) {
             
             for (User& user: registered_users) {

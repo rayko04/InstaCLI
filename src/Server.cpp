@@ -237,13 +237,22 @@ void handleClient(int client_fd) {
         }
 
     //SEND command
-        else if (data.rfind("SEND", 0) == 0) {
-            
-            //trim "SEND "
+       else if (data.rfind("SEND", 0) == 0) {
             target = trim(data.substr(5));
-
-            std::lock_guard<std::mutex> guard(map_mutex);
-            if(user_map.find(target) == user_map.end()) {
+            
+            bool userExists = false;
+            for (const auto& user_pair : user_map) {
+                if (user_pair.first == target) {
+                    userExists = true;  //if online
+                    break;
+                }
+            }
+            
+            if (!userExists) {
+                userExists = database.userExists(target);  // if offline
+            }
+            
+            if (!userExists) {
                 std::cout << "\nNO USERNAME " << target << " found!\n";
                 target.clear();
             }
@@ -261,19 +270,21 @@ void handleClient(int client_fd) {
             std::string msg{ trim(data.substr(4)) };
             
             std::lock_guard<std::mutex> guard(map_mutex);
-            if (user_map.find(target) != user_map.end()) {
-                database.storeMessage(username, target, msg, getCurrentTimestamp());
+            
+            database.storeMessage(username, target, msg, getCurrentTimestamp());
 
+            //if online send notif
+            if (user_map.find(target) != user_map.end()) {
+                
                 std::string send_msg {"NOTIF:" + username + ": " + msg};
                 std::string encryptedMsg = Encryption::encrypt(send_msg);
                 if (send(user_map[target], encryptedMsg.c_str(), encryptedMsg.size(), 0) < 0) {
                     perror("send"); 
-                    break;
                 }
-            }
+                std::cout << "Message sent to " << target << " (online)\n";
+            } 
             else {
-                std::cout << "\nERROR: Target " << target << " disconnected\n";
-                target.clear();
+                std::cout << "Message stored for " << target << " (offline)\n";
             }
         }
 

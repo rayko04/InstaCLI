@@ -737,7 +737,7 @@ int tcpClient() {
                                 perror("send");
                                 break;
                             }
-
+                            
                             std::cout << "\nMSG: ";
                             std::string msg;
                             std::getline(std::cin, msg);
@@ -748,10 +748,10 @@ int tcpClient() {
                                 perror("send");
                                 break;
                             }
-
+                            
                             std::cout << "\nMessage sent!\n";
                         }
-                        
+
                         break;
                     }
 
