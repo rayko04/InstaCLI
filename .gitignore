@@ -12,3 +12,5 @@ src/uploads
 src/Client
 src/Server
 src/downloads
+src/ServerNoEnc
+src/ClientNoEnc
