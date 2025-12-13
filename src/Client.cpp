@@ -10,6 +10,7 @@
 #include <sys/stat.h>
 #include <vector>
 #include <chrono>
+#include "encryption.hpp"
 
 std::mutex cout_mutex {};
 std::string current_prompt = "";
@@ -44,7 +45,11 @@ bool sendFile(int sock_fd, const std::string& filePath) {
     
     //send header first: "FILE filename|fileSize"
     std::string fileHeader{"FILE " + fileName + "|" + std::to_string(fileSize)};
-    if (send(sock_fd, fileHeader.c_str(), fileHeader.size(), 0) < 0) { perror("send file header"); return false;}
+    std::string encryptedHeader = Encryption::encrypt(fileHeader);
+    if (send(sock_fd, encryptedHeader.c_str(), encryptedHeader.size(), 0) < 0) { 
+        perror("send file header"); 
+        return false;
+    }
 
     //acknowlegment for header
     char ack[4] {};
@@ -52,6 +57,8 @@ bool sendFile(int sock_fd, const std::string& filePath) {
         std::cout << "\nERROR: no Ack received\n";
         return false;
     }
+    std::string decryptedAck = Encryption::decrypt(std::string(ack, 3));
+
 
     //send file in chunks of data
     const size_t CHUNK_SIZE{4096};
@@ -62,15 +69,15 @@ bool sendFile(int sock_fd, const std::string& filePath) {
     while (file.read(buffer, CHUNK_SIZE) || file.gcount() > 0) {
         
         size_t bytesRead{file.gcount()};
-        ssize_t bytesSent{send(sock_fd, buffer, bytesRead, 0)};
-
+        std::string chunk(buffer, bytesRead);
+        std::string encryptedChunk = Encryption::encrypt(chunk);
+        
+        ssize_t bytesSent{send(sock_fd, encryptedChunk.c_str(), encryptedChunk.size(), 0)};
         if (bytesSent < 0) {
-
             perror("send file data");
             return false;
         }
-
-        totalSent += bytesSent;
+        totalSent += bytesSent;    
     }
 
     file.close();
@@ -88,19 +95,21 @@ bool downloadFile(int sock_fd, const std::string& serverPath, const std::string&
     }
     
     std::string downloadCmd = "DOWNLOAD " + serverPath;
-    if (send(sock_fd, downloadCmd.c_str(), downloadCmd.size(), 0) < 0) {
+    std::string encryptedCmd = Encryption::encrypt(downloadCmd);
+    if (send(sock_fd, encryptedCmd.c_str(), encryptedCmd.size(), 0) < 0) {
         perror("send download request");
         return false;
     }
-    
+
     char headerBuffer[1024]{};
     int headerBytes = recv(sock_fd, headerBuffer, sizeof(headerBuffer), 0);
     if (headerBytes <= 0) {
         std::cout << "\nError: No response from server\n";
         return false;
     }
-    
-    std::string header(headerBuffer, headerBytes);
+
+    std::string encryptedHeader(headerBuffer, headerBytes);
+    std::string header = Encryption::decrypt(encryptedHeader);
     
     if (header.rfind("ERROR:", 0) == 0) {
         std::string errorMsg = header.substr(6);
@@ -122,12 +131,13 @@ bool downloadFile(int sock_fd, const std::string& serverPath, const std::string&
     
     std::string fileName = fileInfo.substr(0, pos);
     long fileSize = std::stol(fileInfo.substr(pos + 1));
-    
-    if (send(sock_fd, "ACK", 3, 0) < 0) {
+   
+    std::string ack = "ACK";
+    std::string encryptedAck = Encryption::encrypt(ack);
+    if (send(sock_fd, encryptedAck.c_str(), encryptedAck.size(), 0) < 0) {
         perror("send ACK");
         return false;
-    }
-    
+    }    
     std::string localPath = localDir + "/" + fileName;
     std::ofstream outFile(localPath, std::ios::binary);
     
@@ -151,8 +161,10 @@ bool downloadFile(int sock_fd, const std::string& serverPath, const std::string&
             remove(localPath.c_str());
             return false;
         }
-        outFile.write(buffer, bytes);
-        totalReceived += bytes;
+        std::string encryptedChunk(buffer, bytes);
+        std::string decryptedChunk = Encryption::decrypt(encryptedChunk);
+        outFile.write(decryptedChunk.c_str(), decryptedChunk.size());
+        totalReceived += bytes;    
     }
     
     outFile.close();
@@ -176,8 +188,12 @@ void clearScreen() {
 bool checkUserExists(int sock_fd, const std::string& username) {
     
     std::string checkCmd = "CHECK " + username;
-    if(send(sock_fd, checkCmd.c_str(), checkCmd.size(), 0) < 0) { perror("send"); return false;}
-    
+    std::string encryptedCmd = Encryption::encrypt(checkCmd);
+    if(send(sock_fd, encryptedCmd.c_str(), encryptedCmd.size(), 0) < 0) { 
+        perror("send"); 
+        return false;
+    }
+
     // Wait for response
     char buffer[1024]{};
     int bytes = recv(sock_fd, buffer, sizeof(buffer), 0);
@@ -185,7 +201,9 @@ bool checkUserExists(int sock_fd, const std::string& username) {
         return false;
     }
     
-    std::string response(buffer, bytes);
+    std::string encryptedResponse(buffer, bytes);
+    std::string response = Encryption::decrypt(encryptedResponse);
+    
     if (response.rfind("RESPONSE:", 0) == 0) {
         response = response.substr(9); 
     }
@@ -210,9 +228,11 @@ bool post(int sock_fd, const std::string& username, const std::string& captions,
             std::cout << "\nFailed to receive saved media path\n";
             return false;
         }
-            
+
         //path to media in server
-        savedMediaPath = std::string(pathBuffer, pathBytes);
+        std::string encryptedPath(pathBuffer, pathBytes);
+        savedMediaPath = Encryption::decrypt(encryptedPath);
+    
         if (savedMediaPath.rfind("RESPONSE:", 0) == 0) {
             savedMediaPath = savedMediaPath.substr(9);
         }
@@ -224,14 +244,20 @@ bool post(int sock_fd, const std::string& username, const std::string& captions,
     }
 
     std::string postCmd{"POST " + username + "|" + captions + "|" + savedMediaPath + "|" + getCurrentTimestamp()};
-    if(send(sock_fd, postCmd.c_str(), postCmd.size(), 0) < 0) { perror("send"); return false;}
+    std::string encryptedCmd = Encryption::encrypt(postCmd);
+    if(send(sock_fd, encryptedCmd.c_str(), encryptedCmd.size(), 0) < 0) { 
+        perror("send"); 
+        return false;
+    }
 
     //response
     char buffer[1024]{};
     int bytes = recv(sock_fd, buffer, sizeof(buffer), 0);
     if (bytes <= 0)     return false;
 
-    std::string response(buffer, bytes);
+    std::string encryptedResponse(buffer, bytes);
+    std::string response = Encryption::decrypt(encryptedResponse);
+
     if (response.rfind("RESPONSE:", 0) == 0) {
         response = response.substr(9);
     }
@@ -252,7 +278,11 @@ void showFeed(int sock_fd) {
     
     // Request feed from server
     std::string feedCmd = "FEED";
-    if (send(sock_fd, feedCmd.c_str(), feedCmd.size(), 0) < 0) {perror("send");return;}
+    std::string encryptedCmd = Encryption::encrypt(feedCmd);
+    if (send(sock_fd, encryptedCmd.c_str(), encryptedCmd.size(), 0) < 0) {
+        perror("send");
+        return;
+    }
     
     // Receive feed 
     char buffer[4096]{};  // Larger buffer for feed
@@ -261,12 +291,14 @@ void showFeed(int sock_fd) {
         std::cout << "\nFailed to receive feed\n";
         return;
     }
+
+    std::string encryptedFeed(buffer, bytes);
+    std::string feedData = Encryption::decrypt(encryptedFeed);
     
-    std::string feedData(buffer, bytes);
     if (feedData.rfind("RESPONSE:", 0) == 0) {
         feedData = feedData.substr(9);
     }
-    
+        
     if (feedData == "EMPTY") {
         std::cout << "\n=== FEED ===\n";
         std::cout << "No posts yet. Be the first to post!\n";
@@ -349,8 +381,12 @@ void showFeed(int sock_fd) {
 std::string getChatList(int sock_fd) {
 
     std::string chatListCmd = "CHATLIST";
-    if (send(sock_fd, chatListCmd.c_str(), chatListCmd.size(), 0) < 0) {perror("send");return "";}
-    
+    std::string encryptedCmd = Encryption::encrypt(chatListCmd);
+    if (send(sock_fd, encryptedCmd.c_str(), encryptedCmd.size(), 0) < 0) {
+        perror("send");
+        return "";
+    }
+
     char buffer[4096]{};
     int bytes = recv(sock_fd, buffer, sizeof(buffer), 0);
     if (bytes <= 0) {
@@ -358,7 +394,9 @@ std::string getChatList(int sock_fd) {
         return "";
     }
     
-    std::string chatListData(buffer, bytes);
+    std::string encryptedData(buffer, bytes);
+    std::string chatListData = Encryption::decrypt(encryptedData);
+        
     if (chatListData.rfind("RESPONSE:", 0) == 0) {
         chatListData = chatListData.substr(9);
     }
@@ -399,10 +437,12 @@ void showChatList(int sock_fd) {
 void showChatHistory(int sock_fd, const std::string& currentUser, const std::string& otherUser) {
 
     std::string historyCmd = "HISTORY " + otherUser;
-    if (send(sock_fd, historyCmd.c_str(), historyCmd.size(), 0) < 0) {
+    std::string encryptedCmd = Encryption::encrypt(historyCmd);
+    if (send(sock_fd, encryptedCmd.c_str(), encryptedCmd.size(), 0) < 0) {
         perror("send");
         return;
     }
+    
     
     char buffer[4096]{};
     int bytes = recv(sock_fd, buffer, sizeof(buffer), 0);
@@ -411,7 +451,9 @@ void showChatHistory(int sock_fd, const std::string& currentUser, const std::str
         return;
     }
     
-    std::string historyData(buffer, bytes);
+    std::string encryptedData(buffer, bytes);
+    std::string historyData = Encryption::decrypt(encryptedData);
+   
     if (historyData.rfind("RESPONSE:", 0) == 0) {
         historyData = historyData.substr(9);
     }
@@ -470,8 +512,9 @@ void receiveMessages(int sock_fd) {
         
         if(bytes > 0) {
             
-            std::string message(buffer, bytes);
-            
+            std::string encryptedMsg(buffer, bytes);
+            std::string message = Encryption::decrypt(encryptedMsg);
+                        
             // Only process messages with NOTIF: prefix
             if (message.rfind("NOTIF:", 0) == 0) {
                 
@@ -515,6 +558,8 @@ int tcpClient() {
     //connect
     if (connect(sock_fd, (sockaddr*)&addr, sizeof(addr)) < 0) {perror("connect"); return 1;}
 
+    std::cout << "Connected to encrypted server\n";
+
     //seperate thread for receiving msgs
    std::thread receiver(receiveMessages, sock_fd);
     receiver.detach();
@@ -548,7 +593,13 @@ int tcpClient() {
             loginCmd = "REGIS " + name;
 
         
-        if(send(sock_fd, loginCmd.c_str(), loginCmd.size(), 0) < 0) {perror("send"); close(sock_fd); return 1;}
+        std::string encryptedCmd = Encryption::encrypt(loginCmd);
+        if(send(sock_fd, encryptedCmd.c_str(), encryptedCmd.size(), 0) < 0) {
+            perror("send"); 
+            close(sock_fd); 
+            return 1;
+        }
+
         std::cout << "\nWELCOME " << name << std::endl;
 
         bool logoutReq{false};
@@ -654,13 +705,22 @@ int tcpClient() {
                                 
                                 if (sendChoice == "y" || sendChoice == "Y") {
                                     std::string sendCmd = "SEND " + chatUser;
-                                    if(send(sock_fd, sendCmd.c_str(), sendCmd.size(), 0) < 0) {perror("send"); break;}
-                                    
+                                    std::string encSend = Encryption::encrypt(sendCmd);
+                                    if(send(sock_fd, encSend.c_str(), encSend.size(), 0) < 0) {
+                                        perror("send"); 
+                                        break;
+                                    }
+
                                     std::cout << "\nMSG: ";
                                     std::string msg;
                                     std::getline(std::cin, msg);
                                     msg = "MSG " + msg;
-                                    if (send(sock_fd, msg.c_str(), msg.size(), 0) < 0) {perror("send");break;}
+                                    std::string encMsg = Encryption::encrypt(msg);
+                                    if (send(sock_fd, encMsg.c_str(), encMsg.size(), 0) < 0) {
+                                        perror("send");
+                                        break;
+                                    }                   
+                                    
                                     std::cout << "\nMessage sent!\n";
                                 }
                             }
@@ -671,19 +731,24 @@ int tcpClient() {
                             std::string target;
                             std::getline(std::cin, target);
                             target = "SEND " + target;
-                            if(send(sock_fd, target.c_str(), target.size(), 0) < 0) {
+                            
+                            std::string encTarget = Encryption::encrypt(target);
+                            if(send(sock_fd, encTarget.c_str(), encTarget.size(), 0) < 0) {
                                 perror("send");
                                 break;
                             }
-                            
+
                             std::cout << "\nMSG: ";
                             std::string msg;
                             std::getline(std::cin, msg);
                             msg = "MSG " + msg;
-                            if (send(sock_fd, msg.c_str(), msg.size(), 0) < 0) {
+                            
+                            std::string encMsg = Encryption::encrypt(msg);
+                            if (send(sock_fd, encMsg.c_str(), encMsg.size(), 0) < 0) {
                                 perror("send");
                                 break;
                             }
+
                             std::cout << "\nMessage sent!\n";
                         }
                         
@@ -692,9 +757,14 @@ int tcpClient() {
 
                 case '4': {
                          std::string logoutCmd{"LOGOUT " + name};
-                         if(send(sock_fd, logoutCmd.c_str(), logoutCmd.size(), 0) < 0) 
-                            {perror("send"); close(sock_fd); return 1;}
-                         logoutReq = true;
+                         std::string encLogout = Encryption::encrypt(logoutCmd);
+                        if(send(sock_fd, encLogout.c_str(), encLogout.size(), 0) < 0) {
+                            perror("send"); 
+                            close(sock_fd); 
+                            return 1;
+                        }
+
+                        logoutReq = true;
                          break;
                           }
                 default: std::cout << "\nINVALID OPTION\n"; continue; 

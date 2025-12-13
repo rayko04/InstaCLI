@@ -11,6 +11,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include "database.hpp"
+#include "encryption.hpp"
 
 
 Database database{};
@@ -58,12 +59,14 @@ std::string receiveFile(int client_fd, const std::string& filename, long filesiz
     }
     
     // Send ACK
-    if (send(client_fd, "ACK", 3, 0) < 0) {
+    std::string ack = "ACK";
+    std::string encryptedAck = Encryption::encrypt(ack);
+    if (send(client_fd, encryptedAck.c_str(), encryptedAck.size(), 0) < 0) {
         perror("send ACK");
         outFile.close();
         return "";
     }
-    
+
     // Receive file data
     const size_t CHUNK_SIZE = 4096;
     char buffer[CHUNK_SIZE];
@@ -81,8 +84,10 @@ std::string receiveFile(int client_fd, const std::string& filename, long filesiz
             return "";
         }
 
-        outFile.write(buffer, bytes);
-        totalReceived += bytes;
+        std::string encryptedChunk(buffer, bytes);
+        std::string decryptedChunk = Encryption::decrypt(encryptedChunk);
+        outFile.write(decryptedChunk.c_str(), decryptedChunk.size());
+        totalReceived += bytes;    
     }
     
     outFile.close();
@@ -107,16 +112,19 @@ bool sendFileToClient(int client_fd, const std::string& filePath) {
     std::string fileName = (pos != std::string::npos) ? filePath.substr(pos + 1) : filePath;
     
     std::string fileHeader = "DOWNLOADACK " + fileName + "|" + std::to_string(fileSize);
-    if (send(client_fd, fileHeader.c_str(), fileHeader.size(), 0) < 0) {
+    
+    std::string encryptedHeader = Encryption::encrypt(fileHeader);
+    if (send(client_fd, encryptedHeader.c_str(), encryptedHeader.size(), 0) < 0) {
         perror("send file header");
         return false;
-    }
-    
+    }  
+
     char ack[4]{};
     if (recv(client_fd, ack, sizeof(ack), 0) <= 0) {
         std::cout << "\nError: No ACK received from client\n";
         return false;
     }
+    std::string decryptedAck = Encryption::decrypt(std::string(ack, 3));
     
     const size_t CHUNK_SIZE = 4096;
     char buffer[CHUNK_SIZE];
@@ -124,7 +132,10 @@ bool sendFileToClient(int client_fd, const std::string& filePath) {
     
     while (file.read(buffer, CHUNK_SIZE) || file.gcount() > 0) {
         size_t bytesRead = file.gcount();
-        ssize_t bytesSent = send(client_fd, buffer, bytesRead, 0);
+        std::string chunk(buffer, bytesRead);
+
+        std::string encryptedChunk = Encryption::encrypt(chunk);
+        ssize_t bytesSent = send(client_fd, encryptedChunk.c_str(), encryptedChunk.size(), 0);
         if (bytesSent < 0) {
             perror("send file data");
             file.close();
@@ -132,7 +143,7 @@ bool sendFileToClient(int client_fd, const std::string& filePath) {
         }
         totalSent += bytesSent;
     }
-    
+
     file.close();
     std::cout << "\nFile sent to client: " << fileName << " (" << totalSent << " bytes)\n";
     return true;
@@ -167,9 +178,10 @@ void handleClient(int client_fd) {
         }
         
 
-        std::string data(buffer, bytes);
-        data = trim(data);
-    
+        std::string encryptedData(buffer, bytes);
+        std::string data = Encryption::decrypt(encryptedData);
+        data = trim(data);    
+
     //CHECK command
         if (data.rfind("CHECK", 0) == 0) {
         
@@ -182,9 +194,11 @@ void handleClient(int client_fd) {
                 
                 // Send response back to client
                 std::string response = exists ? "RESPONSE:EXISTS" : "RESPONSE:NOTEXISTS";
-                if(send(client_fd, response.c_str(), response.size(), 0) < 0) {perror("send");}
+               std::string encryptedResponse = Encryption::encrypt(response);
+                if(send(client_fd, encryptedResponse.c_str(), encryptedResponse.size(), 0) < 0) {perror("send");}            
             }
         }
+
     //LOGIN command
         else if (data.rfind("LOGIN", 0) == 0) {
             
@@ -251,7 +265,11 @@ void handleClient(int client_fd) {
                 database.storeMessage(username, target, msg, getCurrentTimestamp());
 
                 std::string send_msg {"NOTIF:" + username + ": " + msg};
-                if (send(user_map[target], send_msg.c_str(), send_msg.size(), 0) < 0) {perror("send"); break;}
+                std::string encryptedMsg = Encryption::encrypt(send_msg);
+                if (send(user_map[target], encryptedMsg.c_str(), encryptedMsg.size(), 0) < 0) {
+                    perror("send"); 
+                    break;
+                }
             }
             else {
                 std::cout << "\nERROR: Target " << target << " disconnected\n";
@@ -264,7 +282,8 @@ void handleClient(int client_fd) {
             
             std::string chatListData = "RESPONSE:" + database.getChatList(username);
             
-            if (send(client_fd, chatListData.c_str(), chatListData.size(), 0) < 0) {perror("send");}
+            std::string encryptedData {Encryption::encrypt(chatListData)};
+            if (send(client_fd, encryptedData.c_str(), encryptedData.size(), 0) < 0) {perror("send");}
             
             std::cout << username << " requested chat list\n";
         }
@@ -278,7 +297,8 @@ void handleClient(int client_fd) {
             if (!otherUser.empty()) {
                 std::string historyData = "RESPONSE:" + database.getConversation(username, otherUser);
                 
-                if (send(client_fd, historyData.c_str(), historyData.size(), 0) < 0) {perror("send");}
+                std::string encryptedData {Encryption::encrypt(historyData)};
+                if (send(client_fd, encryptedData.c_str(), encryptedData.size(), 0) < 0) {perror("send");}
                 
                 std::cout << username << " requested chat history with " << otherUser << "\n";
             }
@@ -306,7 +326,10 @@ void handleClient(int client_fd) {
         
                 // Send response back to client
                 std::string response = success ? "RESPONSE:OK" : "RESPONSE:NO";
-                if (send(client_fd, response.c_str(), response.size(), 0) < 0) {perror("send");}
+                std::string encryptedResponse = Encryption::encrypt(response);
+                if (send(client_fd, encryptedResponse.c_str(), encryptedResponse.size(), 0) < 0) {
+                    perror("send");
+                }
         
                 if (success) 
                     std::cout << post_username << " created a post: \"" << captions << "\"\n";
@@ -319,9 +342,11 @@ void handleClient(int client_fd) {
                 
                 // Invalid format
                 std::string response = "NO";
-                if (send(client_fd, response.c_str(), response.size(), 0) < 0) {perror("send");}
-                std::cout << "Invalid POST format received\n";
-                }
+                std::string encryptedResponse = Encryption::encrypt(response);
+                if (send(client_fd, encryptedResponse.c_str(), encryptedResponse.size(), 0) < 0) {
+                    perror("send");
+                }                std::cout << "Invalid POST format received\n";
+            }
         }
 
     //FEED command
@@ -330,7 +355,10 @@ void handleClient(int client_fd) {
             std::string feedData = "RESPONSE:" + database.showAllPosts();
     
             // Send feed data back to client
-            if (send(client_fd, feedData.c_str(), feedData.size(), 0) < 0) {perror("send");}
+            std::string encryptedFeed = Encryption::encrypt(feedData);
+            if (send(client_fd, encryptedFeed.c_str(), encryptedFeed.size(), 0) < 0) {
+                perror("send");
+            }
             
             std::cout << username << " requested feed\n";
         }
@@ -354,14 +382,19 @@ void handleClient(int client_fd) {
                 if (!savedPath.empty()) {
                     // Send back the saved path to client
                     std::string response{"RESPONSE:" + savedPath};
-                    if (send(client_fd, response.c_str(), response.size(), 0) < 0) {perror("send saved path");}
+                    std::string encryptedResponse = Encryption::encrypt(response);
+                    if (send(client_fd, encryptedResponse.c_str(), encryptedResponse.size(), 0) < 0) {
+                        perror("send saved path");
+                    }
                 }
 
                 else {
                     // Send error
                     std::string error = "ERROR";
-                    if (send(client_fd, error.c_str(), error.size(), 0) < 0) {perror("send error");}
-                }
+                    std::string encryptedError = Encryption::encrypt(error);
+                    if (send(client_fd, encryptedError.c_str(), encryptedError.size(), 0) < 0) {
+                        perror("send error");
+                    }                }
             }
         }
 
@@ -376,8 +409,10 @@ void handleClient(int client_fd) {
             
                 if (!checkFile.good()) {
                     std::string error = "ERROR:FILE_NOT_FOUND";
-                    if (send(client_fd, error.c_str(), error.size(), 0) < 0) { perror("send error");}
-                std::cout << "File not found: " << filePath << "\n";
+                    std::string encryptedError = Encryption::encrypt(error);
+                    if (send(client_fd, encryptedError.c_str(), encryptedError.size(), 0) < 0) {
+                        perror("send error");
+                    }                std::cout << "File not found: " << filePath << "\n";
                 } 
 
                 else {
@@ -385,7 +420,10 @@ void handleClient(int client_fd) {
                     checkFile.close();
                     if (!sendFileToClient(client_fd, filePath)) {
                         std::string error = "ERROR:SEND_FAILED";
-                    if (send(client_fd, error.c_str(), error.size(), 0) < 0) { perror("send error");}
+                        std::string encryptedError = Encryption::encrypt(error);
+                        if (send(client_fd, encryptedError.c_str(), encryptedError.size(), 0) < 0) {
+                            perror("send error");
+                        }                    
                     }
                 }
             } 
@@ -393,7 +431,10 @@ void handleClient(int client_fd) {
             else {
                 
                 std::string error = "ERROR:INVALID_PATH";
-                if (send(client_fd, error.c_str(), error.size(), 0) < 0) {perror("send error");}
+                std::string encryptedError = Encryption::encrypt(error);
+                if (send(client_fd, encryptedError.c_str(), encryptedError.size(), 0) < 0) {
+                    perror("send error");
+                }            
             }
         }
 
@@ -425,6 +466,8 @@ int tcpServer() {
 
     //start listening
     if (listen(server_fd, 5) < 0) {perror("listen"); return 1;}
+
+    std::cout << "Encrypted Server listening on port 5555\n";
 
     // Accept and store connections with multiple clients
     std::vector<int> clients {};
